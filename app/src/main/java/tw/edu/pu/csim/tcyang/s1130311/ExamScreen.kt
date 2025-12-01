@@ -1,5 +1,6 @@
 package tw.edu.pu.csim.tcyang.s1130311
 
+import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -18,7 +19,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -34,183 +34,188 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
 
+data class ServiceAnswer(
+    val imageId: Int,
+    val correctRoleId: Int,
+    val description: String
+)
+
 @Composable
 fun ExamScreen(viewModel: ExamViewModel = viewModel()) {
-    // 取得 Context 用來讀取螢幕像素
     val context = LocalContext.current
     val displayMetrics = context.resources.displayMetrics
-    val density = LocalDensity.current // 取得螢幕密度，用於 px 轉 dp
-    // 計算 300px 對應的 dp 值
-    // 這樣設定寬高，在任何螢幕上都會剛好是 300個物理像素
-    val iconSizePx = 300
-    val iconSizeDp = with(density) { iconSizePx.toDp() }
+    val density = LocalDensity.current
 
     val screenWidth = displayMetrics.widthPixels
     val screenHeight = displayMetrics.heightPixels
-    //遊戲變數設定
-    //隨機掉落的 4 張「服務圖示」
-    val services = listOf(
-        R.drawable.service0,
-        R.drawable.service1,
-        R.drawable.service2,
-        R.drawable.service3
+    val iconSizePx = 300
+    val iconSizeDp = with(density) { iconSizePx.toDp() }
+
+    val serviceAnswers = listOf(
+        ServiceAnswer(R.drawable.service0, R.drawable.role0, "極早期療育，屬於嬰幼兒方面的服務"),
+        ServiceAnswer(R.drawable.service1, R.drawable.role1, "離島服務，屬於兒童方面的服務"),
+        ServiceAnswer(R.drawable.service2, R.drawable.role2, "極重多障，屬於成人方面的服務"),
+        ServiceAnswer(R.drawable.service3, R.drawable.role3, "輔具服務，屬於一般民眾方面的服務")
     )
-    // 隨機選一張服務圖示
-    var currentService by remember { mutableIntStateOf(services.random()) }
-    // 掉落圖示的座標 (X, Y)
-    // 初始 X: 水平置中
-    // 初始 Y: 0 (螢幕最上方)
+
+    var currentQuestion by remember { mutableStateOf(serviceAnswers.random()) }
+    var statusText by remember { mutableStateOf("") }
+
     var iconX by remember { mutableFloatStateOf((screenWidth - iconSizePx) / 2f) }
     var iconY by remember { mutableFloatStateOf(0f) }
-    // 狀態文字：紀錄碰撞結果
-    var statusText by remember { mutableStateOf("") }
-    // 定義碰撞判斷函式 (檢查兩個矩形是否重疊)
+
+    var currentToast by remember { mutableStateOf<Toast?>(null) }
+
+    // 鎖定變數：防止碰撞邏輯重複執行
+    var isProcessing by remember { mutableStateOf(false) }
+
+    fun showToast(message: String) {
+        currentToast?.cancel()
+        val newToast = Toast.makeText(context, message, Toast.LENGTH_SHORT)
+        newToast.show()
+        currentToast = newToast
+    }
+
     fun isColliding(targetX: Float, targetY: Float): Boolean {
-        // 簡單的矩形重疊判斷 (A左 < B右 && A右 > B左 && A上 < B下 && A下 > B上)
-        // 這裡 iconX, iconY 是掉落圖示的左上角
         return iconX < targetX + iconSizePx &&
                 iconX + iconSizePx > targetX &&
                 iconY < targetY + iconSizePx &&
                 iconY + iconSizePx > targetY
     }
-    // 重置函式
-    fun resetIcon() {
+
+    fun nextQuestion() {
+        // 重置位置到正上方中間
         iconY = 0f
         iconX = (screenWidth - iconSizePx) / 2f
-        currentService = services.random()
+        currentQuestion = serviceAnswers.random()
+
+        statusText = ""
+        currentToast?.cancel() // 確保上一題的 Toast 消失
     }
 
-    // 程式啟動時，讀取並更新寬高
+    suspend fun handleCollision(hitRoleId: Int?, isBottom: Boolean) {
+        if (isProcessing) return
+        isProcessing = true // 鎖定
+
+        if (isBottom) {
+            viewModel.score -= 1
+            statusText = "(掉到最下方)"
+            showToast("掉到最下方")
+        } else if (hitRoleId != null) {
+            if (hitRoleId == currentQuestion.correctRoleId) {
+                viewModel.score += 1
+            } else {
+                viewModel.score -= 1
+            }
+            statusText = when (hitRoleId) {
+                R.drawable.role0 -> "(碰撞嬰幼兒圖示)"
+                R.drawable.role1 -> "(碰撞兒童圖示)"
+                R.drawable.role2 -> "(碰撞成人圖示)"
+                R.drawable.role3 -> "(碰撞一般民眾圖示)"
+                else -> ""
+            }
+            showToast(currentQuestion.description)
+        }
+
+        delay(3000) // 暫停 3 秒讓使用者看結果
+
+        nextQuestion() // 出下一題 (重置座標)
+
+        // ★★★ 關鍵修正：多等待一點時間，讓座標重置生效後，才解鎖迴圈 ★★★
+        // 這能防止迴圈在座標還沒歸零前就誤判碰撞
+        delay(500)
+
+        isProcessing = false // 解鎖，開始下一題掉落
+    }
+
     LaunchedEffect(Unit) {
         viewModel.updateScreenDimensions(screenWidth, screenHeight)
     }
-    // 掉落迴圈 (每 0.1 秒往下 20px)
+
+    // 遊戲迴圈
     LaunchedEffect(Unit) {
         while (true) {
-            delay(100) // 0.1秒
+            delay(100)
+
+            if (isProcessing) continue
+
             iconY += 20
-            // 檢查是否碰撞到角色
+
+            // ★★★ 安全區域檢查：必須掉下超過 100px 才開始偵測 ★★★
+            // 防止因為剛出生在頂部，而誤判撞到中間的角色
+            if (iconY < 100f) {
+                continue
+            }
+
+            // 碰撞檢查
             if (isColliding(0f, (screenHeight / 2f) - iconSizePx)) {
-                statusText = "(碰撞嬰幼兒圖示)"
-                resetIcon()
+                handleCollision(R.drawable.role0, false)
                 continue
             }
             if (isColliding((screenWidth - iconSizePx).toFloat(), (screenHeight / 2f) - iconSizePx)) {
-                statusText = "(碰撞兒童圖示)"
-                resetIcon()
+                handleCollision(R.drawable.role1, false)
                 continue
             }
             if (isColliding(0f, (screenHeight - iconSizePx).toFloat())) {
-                statusText = "(碰撞成人圖示)"
-                resetIcon()
+                handleCollision(R.drawable.role2, false)
                 continue
             }
             if (isColliding((screenWidth - iconSizePx).toFloat(), (screenHeight - iconSizePx).toFloat())) {
-                statusText = "(碰撞一般民眾圖示)"
-                resetIcon()
+                handleCollision(R.drawable.role3, false)
                 continue
             }
-            // --- 2. 檢查是否掉到最下方 (邊界) ---
             if (iconY + iconSizePx >= screenHeight) {
-                statusText = "(掉到最下方)"
-                resetIcon()
+                handleCollision(null, true)
             }
         }
     }
 
-    // 用 Box，方便做絕對位置的對齊
     Box(modifier = Modifier.fillMaxSize()) {
-        //畫面佈局
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Yellow), // 題目要求：黃色背景
-            verticalArrangement = Arrangement.Center, // 垂直置中
-            horizontalAlignment = Alignment.CenterHorizontally // 水平置中
+                .background(Color.Yellow),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // 圖片
-            Image(
-                painter = painterResource(id = R.drawable.happy),
-                contentDescription = "背景圖",
-            )
-            // 文字：顯示作者資訊
-            Text(
-                text = "瑪利亞基金會服務大考驗",
-                color = Color.Black
-            )
-            Text(
-                text = "作者：資管二B 林建宇",
-                color = Color.Black
-            )
-            // 間距高度 10dp
+            Image(painter = painterResource(id = R.drawable.happy), contentDescription = null)
+            Text(text = "瑪利亞基金會服務大考驗", color = Color.Black)
+            Text(text = "作者：資管二B 林建宇", color = Color.Black)
             Spacer(modifier = Modifier.height(10.dp))
-            // 文字：顯示螢幕寬高 (從 ViewModel 讀取)
-            Text(
-                text = viewModel.screenInfo,
-                color = Color.Black
-            )
-
+            Text(text = viewModel.screenInfo, color = Color.Black)
             Spacer(modifier = Modifier.height(10.dp))
 
             Text(
-                text = "成績：0分$statusText",
+                text = "成績：${viewModel.score}分 $statusText",
                 color = Color.Black
             )
         }
-        // 處理「下方切齊螢幕高 1/2」的圖片
+
         Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.5f) // 高度佔螢幕 50%
-                .align(Alignment.TopCenter) // 放在螢幕上半部
+            modifier = Modifier.fillMaxWidth().fillMaxHeight(0.5f).align(Alignment.TopCenter)
         ) {
-            // 嬰幼兒：左邊切齊，下方切齊螢幕一半
-            Image(
-                painter = painterResource(id = R.drawable.role0),
-                contentDescription = "嬰幼兒",
-                modifier = Modifier
-                    .size(iconSizeDp)
-                    .align(Alignment.BottomStart) // 左下角對齊
-            )
-
-            // 兒童：右邊切齊，下方切齊螢幕一半
-            Image(
-                painter = painterResource(id = R.drawable.role1),
-                contentDescription = "兒童",
-                modifier = Modifier
-                    .size(iconSizeDp)
-                    .align(Alignment.BottomEnd) // 右下角對齊
-            )
+            Image(painter = painterResource(id = R.drawable.role0), contentDescription = "嬰幼兒",
+                modifier = Modifier.size(iconSizeDp).align(Alignment.BottomStart))
+            Image(painter = painterResource(id = R.drawable.role1), contentDescription = "兒童",
+                modifier = Modifier.size(iconSizeDp).align(Alignment.BottomEnd))
         }
-        // 處理「下方切齊螢幕底部」的圖片
-        // 成人：左邊切齊，下方切齊螢幕
-        Image(
-            painter = painterResource(id = R.drawable.role2),
-            contentDescription = "成人",
-            modifier = Modifier
-                .size(iconSizeDp)
-                .align(Alignment.BottomStart) // 左下角對齊整個螢幕
-        )
+        Image(painter = painterResource(id = R.drawable.role2), contentDescription = "成人",
+            modifier = Modifier.size(iconSizeDp).align(Alignment.BottomStart))
+        Image(painter = painterResource(id = R.drawable.role3), contentDescription = "一般民眾",
+            modifier = Modifier.size(iconSizeDp).align(Alignment.BottomEnd))
 
-        // 一般民眾：右邊切齊，下方切齊螢幕
         Image(
-            painter = painterResource(id = R.drawable.role3),
-            contentDescription = "一般民眾",
-            modifier = Modifier
-                .size(iconSizeDp)
-                .align(Alignment.BottomEnd) // 右下角對齊整個螢幕
-        )
-        //掉落的「服務圖示」
-        Image(
-            painter = painterResource(id = currentService), // 這裡顯示隨機選到的 service 圖
+            painter = painterResource(id = currentQuestion.imageId),
             contentDescription = "Service",
             modifier = Modifier
                 .size(iconSizeDp)
                 .offset { IntOffset(iconX.toInt(), iconY.toInt()) }
                 .pointerInput(Unit) {
                     detectDragGestures { change, dragAmount ->
-                        change.consume()
-                        iconX += dragAmount.x // 水平拖曳
+                        if (!isProcessing) {
+                            change.consume()
+                            iconX += dragAmount.x
+                        }
                     }
                 }
         )
