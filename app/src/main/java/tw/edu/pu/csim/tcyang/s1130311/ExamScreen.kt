@@ -19,6 +19,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -61,6 +62,23 @@ fun ExamScreen(viewModel: ExamViewModel = viewModel()) {
     // 初始 Y: 0 (螢幕最上方)
     var iconX by remember { mutableFloatStateOf((screenWidth - iconSizePx) / 2f) }
     var iconY by remember { mutableFloatStateOf(0f) }
+    // 狀態文字：紀錄碰撞結果
+    var statusText by remember { mutableStateOf("") }
+    // 定義碰撞判斷函式 (檢查兩個矩形是否重疊)
+    fun isColliding(targetX: Float, targetY: Float): Boolean {
+        // 簡單的矩形重疊判斷 (A左 < B右 && A右 > B左 && A上 < B下 && A下 > B上)
+        // 這裡 iconX, iconY 是掉落圖示的左上角
+        return iconX < targetX + iconSizePx &&
+                iconX + iconSizePx > targetX &&
+                iconY < targetY + iconSizePx &&
+                iconY + iconSizePx > targetY
+    }
+    // 重置函式
+    fun resetIcon() {
+        iconY = 0f
+        iconX = (screenWidth - iconSizePx) / 2f
+        currentService = services.random()
+    }
 
     // 程式啟動時，讀取並更新寬高
     LaunchedEffect(Unit) {
@@ -69,15 +87,33 @@ fun ExamScreen(viewModel: ExamViewModel = viewModel()) {
     // 掉落迴圈 (每 0.1 秒往下 20px)
     LaunchedEffect(Unit) {
         while (true) {
-            delay(100)
+            delay(100) // 0.1秒
             iconY += 20
-            // 檢查觸底
+            // 檢查是否碰撞到角色
+            if (isColliding(0f, (screenHeight / 2f) - iconSizePx)) {
+                statusText = "(碰撞嬰幼兒圖示)"
+                resetIcon()
+                continue
+            }
+            if (isColliding((screenWidth - iconSizePx).toFloat(), (screenHeight / 2f) - iconSizePx)) {
+                statusText = "(碰撞兒童圖示)"
+                resetIcon()
+                continue
+            }
+            if (isColliding(0f, (screenHeight - iconSizePx).toFloat())) {
+                statusText = "(碰撞成人圖示)"
+                resetIcon()
+                continue
+            }
+            if (isColliding((screenWidth - iconSizePx).toFloat(), (screenHeight - iconSizePx).toFloat())) {
+                statusText = "(碰撞一般民眾圖示)"
+                resetIcon()
+                continue
+            }
+            // --- 2. 檢查是否掉到最下方 (邊界) ---
             if (iconY + iconSizePx >= screenHeight) {
-                // 重置位置
-                iconY = 0f
-                iconX = (screenWidth - iconSizePx) / 2f
-                // 重新隨機產生一張「服務圖示」
-                currentService = services.random()
+                statusText = "(掉到最下方)"
+                resetIcon()
             }
         }
     }
@@ -117,7 +153,7 @@ fun ExamScreen(viewModel: ExamViewModel = viewModel()) {
             Spacer(modifier = Modifier.height(10.dp))
 
             Text(
-                text = "成績：0分",
+                text = "成績：0分$statusText",
                 color = Color.Black
             )
         }
